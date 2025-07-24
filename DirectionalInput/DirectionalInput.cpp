@@ -1,9 +1,13 @@
+#include <iostream>
+#include <string>
 #include <stdio.h>
+#include <stdlib.h>
 #include "pico/stdlib.h"
 #include "pico/time.h"
 #include "pico/binary_info.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
+#include "hardware/adc.h"
 
 /* Example code to talk to a Max7219 driving an 8 digit 7 segment display via SPI
 
@@ -26,6 +30,8 @@
 
 #define NUM_MODULES 1
 
+// Arrows 
+
 uint8_t arrows[4][8] = {
     {0x08, 0x1c, 0x3e, 0x7f, 0x1c, 0x1c, 0x1c, 0x1c}, // Up
     {0x1c, 0x1c, 0x1c, 0x1c, 0x7f, 0x3e, 0x1c, 0x08}, // Down
@@ -33,10 +39,12 @@ uint8_t arrows[4][8] = {
     {0x08, 0x0c, 0xfe, 0xff, 0xfe, 0x0c, 0x08, 0x00} // Right
 };
 
-static const int UP = 0;
-static const int DOWN = 1;
-static const int LEFT = 2;
-static const int RIGHT = 3;
+static constexpr int UP = 0; // constexpr still typed but compile time
+static constexpr int DOWN = 1;
+static constexpr int LEFT = 2;
+static constexpr int RIGHT = 3;
+
+// SPI fields
 
 const uint8_t CMD_NOOP = 0;
 const uint8_t CMD_DIGIT0 = 1; // Goes up to 8, for each line
@@ -45,6 +53,14 @@ const uint8_t CMD_BRIGHTNESS = 10;
 const uint8_t CMD_SCANLIMIT = 11;
 const uint8_t CMD_SHUTDOWN = 12;
 const uint8_t CMD_DISPLAYTEST = 15;
+
+// Joystick Fields
+
+constexpr uint buttonPin = 28;
+constexpr uint xDeltaPin = 27;
+constexpr uint yDeltaPin = 26;
+absolute_time_t debouncer;
+int64_t wait_time = 100;
 
 #ifdef PICO_DEFAULT_SPI_CSN_PIN
 static inline void cs_select() {
@@ -84,10 +100,10 @@ static void write_register_all(uint8_t reg, uint8_t data) {
 #endif
 
 
-void display_arrow()
+void display_arrow(int arrow)
 {
     for (int i = 0; i<8; i++) {
-        write_register_all(CMD_DIGIT0 + i, arrows[UP][i]);
+        write_register_all(CMD_DIGIT0 + i, arrows[arrow][i]);
     }     
 }
 
@@ -97,7 +113,11 @@ void clear()
         write_register_all(CMD_DIGIT0 + i, 0);
     }
 }
-
+int cur_arrow = 0; // just temp until I learn varx/vary
+void gpio_callback(uint gpio, uint32_t events)
+{
+    clear();
+}
 
 int main() {
     stdio_init_all();
@@ -136,66 +156,36 @@ int main() {
 
     clear();
 
-    int j = 0;
+    display_arrow(UP);
 
-    clear();
-    display_arrow();
+    // DEBOUNCER
+    debouncer = get_absolute_time();
+    // SWITCH INIT
+    gpio_init(buttonPin);
+    gpio_pull_up(buttonPin);
+    gpio_set_dir(buttonPin, GPIO_IN);
+    gpio_set_irq_enabled_with_callback(buttonPin, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+    // JOYSTICK INIT
+    adc_init();
+    adc_gpio_init(yDeltaPin); // adc_select_input 0
+    adc_gpio_init(xDeltaPin); // adc_select_input 1 (28 & 29 are 2 & 3)
+    int adc_x_drift;
+    int adc_y_drift;
+    uint mid = 2000;
+    int active_drift = 200;
     while (true) {
-        sleep_ms(1000);
-        
+        adc_select_input(0);
+        adc_x_drift = (int) (adc_read() - mid);
+        adc_select_input(1);
+        adc_y_drift = (int) (adc_read() - mid);
+        if ((abs(adc_x_drift) > abs(adc_y_drift)) && (abs(adc_x_drift) > active_drift)) {
+            display_arrow((adc_x_drift > 0) ? RIGHT : LEFT);
+        }
+        if ((abs(adc_y_drift) > abs(adc_x_drift)) && (abs(adc_y_drift) > active_drift)) {
+            display_arrow((adc_y_drift > 0) ? UP : DOWN);
+        }
+        // General Loop
+        sleep_ms(100);
     }
 #endif
 }
-
-// const uint ledPin = 15;
-// const uint buttonPin = 19;
-// absolute_time_t debouncer;
-// int64_t wait_time = 100;
-
-// const uint CLK = 2;
-// const uint DIN = 3;
-// const uint DOUT = 4;
-// const uint CS = 5;
-
-
-
-// void gpio_callback(uint gpio, uint32_t events)
-// {
-//     if (absolute_time_diff_us(debouncer, get_absolute_time()) > wait_time)
-//     {
-//         debouncer = get_absolute_time();
-//         if (gpio_get(gpio))
-//         {
-//             if (gpio_get_out_level(ledPin))
-//             {
-//                 gpio_put(ledPin, false);
-//             }
-//             else
-//             {
-//                 gpio_put(ledPin, true);
-//             }
-//         }
-//     }
-// }
-
-// int main()
-// {
-    // stdio_init_all();
-    // // LED INIT
-    // gpio_init(ledPin);
-    // gpio_set_dir(ledPin, GPIO_OUT);
-    // gpio_put(ledPin, false);
-    // // DEBOUNCER
-    // debouncer = get_absolute_time();
-    // // SWITCH INIT
-    // gpio_init(buttonPin);
-    // gpio_pull_up(buttonPin);
-    // gpio_set_dir(buttonPin, GPIO_IN);
-    // gpio_set_irq_enabled_with_callback(buttonPin, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
-
-    // while (true)
-    // {
-    //     sleep_ms(1000);
-    // }
-// }
-
